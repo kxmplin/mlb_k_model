@@ -1,87 +1,40 @@
 #!/usr/bin/env python3
 """
 gen_simulations.py
-------------------
-Attach per-season DuckDBs, sample from each starter’s k_rate and lineup, 
-and simulate total Ks per start.
+Simulate historical starts using date-specific schedule files.
 """
 import argparse
 from pathlib import Path
-
-import numpy as np
-import pandas as pd
 import duckdb
+import pandas as pd
 from tqdm import tqdm
-
-FALLBACK = 0.252
-
-def fetch_k_rate(con: duckdb.DuckDBPyConnection, pid: int, season: str, role: str) -> float:
-    tbl = "stats.pitcher_stats" if role == "pitcher" else "stats.batter_stats"
-    q = f"""
-        SELECT k_rate
-          FROM {tbl}
-         WHERE season = ? AND player_id = ?
-         LIMIT 1
-    """
-    res = con.execute(q, [season, pid]).fetchone()
-    return res[0] if res else FALLBACK
-
-def sim_one(p_rates, avg_outs):
-    """Cycle through p_rates until we record avg_outs outs, counting Ks."""
-    outs = 0
-    ks   = 0
-    idx  = 0
-    n    = len(p_rates)
-    while outs < avg_outs:
-        p = p_rates[idx % n]
-        if np.random.rand() < p:
-            ks += 1
-        # assume 3 outs per non-K? Better to sample per PA but this is a start
-        outs += 1
-        idx += 1
-    return ks
-
-def sim_many(p_rates, avg_outs, n_sims):
-    return np.array([sim_one(p_rates, avg_outs) for _ in range(n_sims)])
+from k_pred_core import sim_many
+from kpred_sim import fetch_k_rate
 
 def main():
-    p = argparse.ArgumentParser()
-    p.add_argument("--hist", default=Path("../data/historical_ks.csv"))
-    p.add_argument("--sims", type=int, default=10000)
-    p.add_argument("--out", default=Path("../data/historical_ks_sim.csv"))
-    args = p.parse_args()
-
-    df = pd.read_csv(args.hist)
-    # attach stats DB
-    db_path = Path(__file__).resolve().parent.parent / "data" / "player_stats.duckdb"
-    con = duckdb.connect(db_path.as_posix())
-
-    out_rows = []
-    for _, row in tqdm(df.iterrows(), total=len(df), desc="Simulating starts"):
-        season  = row.season
-        pid     = int(row.pitcher_id)
-        lineup  = [int(x) for x in row.lineup_ids.split(",")]
-
-        # fetch rates
-        rp       = fetch_k_rate(con, pid, season, "pitcher")
-        batter_ps = [fetch_k_rate(con, b, season, "batter") for b in lineup]
-        p_rates  = np.array([rp] + batter_ps, dtype=float)
-
-        # avg_outs: convert recorded IP into outs
-        avg_outs = int(float(row.k_actual))  # fallback: use actual Ks? better to pull IP
-
-        sims     = sim_many(p_rates, avg_outs, args.sims)
-        out_rows.append({
-            **row.to_dict(),
-            "exp_ks":   float(sims.mean()),
-            "p_over":   float((sims >= np.mean(sims)).mean()),
-            "10th_pct": float(np.percentile(sims, 10)),
-            "90th_pct": float(np.percentile(sims, 90)),
-        })
-
-    pd.DataFrame(out_rows).to_csv(args.out, index=False)
-    print(f"\n✅ Generated {len(out_rows):,} sim results → {args.out}")
+    p=argparse.ArgumentParser()
+    p.add_argument('date',help='YYYY-MM-DD')
+    p.add_argument('--sims',type=int,default=10000)
+    args=p.parse_args(); d=args.date; sims=args.sims
+    base=Path(__file__).resolve().parent.parent
+    sched_db=base/'data'/d/f'schedule_{d}.duckdb'
+    con=duckdb.connect(str(sched_db))
+    sched=con.execute('SELECT game_id,away_pid,home_pid,away_lineup,home_lineup FROM main.schedule',).fetchdf()
     con.close()
+    out_rows=[]; total=len(sched)*2; pbar=tqdm(total=total,desc='Sims sides')
+    for _,g in sched.iterrows():
+        for side in ['away','home']:
+            pid=int(g[f'{side}_pid']); lineup=list(map(int,g[f'{side}_lineup'].split(',')))
+            rp=fetch_k_rate(pid,d[:4],'pitcher')
+            bp=[fetch_k_rate(b,d[:4],'batter') for b in lineup]
+            prates=[rp or 0.252]+[b or 0.252 for b in bp]
+            outs=27;  # maybe parameterize
+            res=sim_many(prates,outs,sims)
+            out_rows.append({'game_id':g['game_id'],'side':side,'mean_k':res.mean(),'p_k':(res>=outs).mean()})
+            pbar.update(1)
+    pbar.close()
+    df=pd.DataFrame(out_rows)
+    df.to_csv(base/'data'/f'sim_results_{d}.csv',index=False)
+    print(f"✅ Simulations saved to sim_results_{d}.csv")
 
-if __name__ == "__main__":
-    main()
+if __name__=='__main__': main()
