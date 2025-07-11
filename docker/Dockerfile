@@ -1,15 +1,22 @@
-# ---- Base image
 FROM python:3.11-slim
 
-# ---- Working dir inside container
 WORKDIR /app
+
+# system deps
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src
+WORKDIR /app/src
+
 ENV PYTHONPATH=/app/src \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# ---- Python deps
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
-# ---- Default command (interactive shell)
-CMD ["bash"]
+# default entrypoint
+ENTRYPOINT ["python"]

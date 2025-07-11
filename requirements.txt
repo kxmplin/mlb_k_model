@@ -1,5 +1,7 @@
-MLB-StatsAPI
+duckdb
+numpy
 pandas
 tqdm
-duckdb
+statsapi-python
+scikit-learn
 matplotlib

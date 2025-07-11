@@ -1,30 +1,29 @@
-"""
-Minimal k-Pred port
--------------------
-• merge_prob()  – same log-odds fusion we used earlier
-• sim_game()    – one start, looping through the lineup
-• sim_many()    – N Monte-Carlo games → array of K totals
-"""
-
-import math, random
 import numpy as np
+import math
 
-def merge_prob(k_pitcher: float, k_batter: float, league=0.20) -> float:
-    """Combine pitcher & batter K% in log-odds space (same as kPred)."""
-    def logit(p): return math.log(p / (1 - p))
-    merged = logit(k_pitcher) + logit(k_batter) - logit(league)
-    return 1 / (1 + math.exp(-merged))
-
-def sim_game(pks: np.ndarray, outs_lambda: float = 18) -> int:
+def sim_game(pks: np.ndarray, outs_lambda: float) -> int:
     """
-    • outs ~ Poisson(outs_lambda)   (18 ≈ 6 IP)
-    • plate appearances ≈ 1.15 × outs
-    • walk through the 9-man lineup modulo 9
+    Simulate one full 'start':
+      • pks: array of strikeout probabilities per PA
+      • outs_lambda: target total outs (line * 3)
+    Returns total Ks recorded.
     """
-    outs = np.random.poisson(outs_lambda)
-    pas  = int(outs * 1.15)
-    order_idx = np.random.randint(0, 9, pas)
-    return np.random.binomial(1, pks[order_idx]).sum()
+    outs_target = int(outs_lambda * 3)
+    outs = ks = 0
+    while outs < outs_target:
+        i = np.random.randint(len(pks))
+        if np.random.rand() < pks[i]:
+            ks += 1
+        else:
+            outs += 1
+    return ks
 
-def sim_many(pks: np.ndarray, n: int = 10_000, outs_lambda: float = 18) -> np.ndarray:
-    return np.fromiter((sim_game(pks, outs_lambda) for _ in range(n)), dtype=int, count=n)
+def sim_many(pks: np.ndarray, n: int, outs_lambda: float) -> np.ndarray:
+    """
+    Run `sim_game` n times.
+    """
+    return np.fromiter(
+        (sim_game(pks, outs_lambda) for _ in range(n)),
+        dtype=int,
+        count=n
+    )
