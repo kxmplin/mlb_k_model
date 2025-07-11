@@ -1,0 +1,5 @@
+MLB-StatsAPI
+pandas
+tqdm
+duckdb
+matplotlib

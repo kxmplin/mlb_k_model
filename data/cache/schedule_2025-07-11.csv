@@ -1,0 +1,17 @@
+game_id,game_type,description,away_team_id,away_team_name,home_team_id,home_team_name,away_prob_name,away_prob_id,home_prob_name,home_prob_id
+777164,R,Makeup of 7/10ppd,114,Cleveland Guardians,145,Chicago White Sox,Logan Allen,671106,Shane Smith,681343
+777146,R,,114,Cleveland Guardians,145,Chicago White Sox,Gavin Williams,668909,Jonathan Cannon,686563
+777157,R,,146,Miami Marlins,110,Baltimore Orioles,Edward Cabrera,665795,Dean Kremer,665152
+777153,R,,112,Chicago Cubs,147,New York Yankees,Chris Flexen,623167,Carlos Rodón,607074
+777160,R,,115,Colorado Rockies,113,Cincinnati Reds,Germán Márquez,608566,Chase Burns,695505
+777161,R,,136,Seattle Mariners,116,Detroit Tigers,Luis Castillo,622491,Tarik Skubal,669373
+777155,R,,139,Tampa Bay Rays,111,Boston Red Sox,Drew Rasmussen,656876,Hunter Dobbins,690928
+777151,R,,121,New York Mets,118,Kansas City Royals,Kodai Senga,673540,Michael Wacha,608379
+777154,R,,140,Texas Rangers,117,Houston Astros,Jack Leiter,683004,Lance McCullers Jr.,621121
+777148,R,,134,Pittsburgh Pirates,142,Minnesota Twins,Paul Skenes,694973,Joe Ryan,657746
+777149,R,,120,Washington Nationals,158,Milwaukee Brewers,Mitchell Parker,680730,Quinn Priester,682990
+777147,R,,144,Atlanta Braves,138,St. Louis Cardinals,Grant Holmes,656550,Matthew Liberatore,669461
+777150,R,,109,Arizona Diamondbacks,108,Los Angeles Angels,Ryne Nelson,669194,Tyler Anderson,542881
+777139,R,,143,Philadelphia Phillies,135,San Diego Padres,Ranger Suárez,624133,Ryan Bergert,686701
+777152,R,,141,Toronto Blue Jays,133,Athletics,Max Scherzer,453286,Luis Severino,622663
+777143,R,,119,Los Angeles Dodgers,137,San Francisco Giants,Dustin May,669160,Logan Webb,657277

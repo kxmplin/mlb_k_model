@@ -1,0 +1,12 @@
+docker build -t mlb-k-model -f docker\Dockerfile .
+
+docker run -it --rm ` -v ${PWD}:/app `      # mount C:\mlb_k_model → /app inside container -w /app `             # set working dir to /app
+  mlb-k-model
+
+# ➊  (re)build the image – tell Docker exactly where the Dockerfile is
+docker build -t mlb-k-model -f C:\mlb_k_model\docker\Dockerfile C:\mlb_k_model
+
+# ➋  start an interactive shell in that image, with your project mounted
+docker run -it --rm -v C:\mlb_k_model:/app -w /app mlb-k-model bash
+
+Docker exec -it bcd9245ea78b6b951d1ddccf7cb37a286989b7606e5f0d32d1ec718aecd71324 /bin/bash

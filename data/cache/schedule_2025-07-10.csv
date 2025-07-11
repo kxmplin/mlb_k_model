@@ -1,0 +1,12 @@
+game_id,game_type,description,away_team_id,away_team_name,home_team_id,home_team_name,away_prob_name,away_prob_id,home_prob_name,home_prob_id
+777165,R,,121,New York Mets,110,Baltimore Orioles,David Peterson,656849,Charlie Morton,450203
+777181,R,Makeup of 7/9 PPD,121,New York Mets,110,Baltimore Orioles,Brandon Waddell,663399,Tomoyuki Sugano,608372
+777166,R,,112,Chicago Cubs,142,Minnesota Twins,Colin Rea,607067,Chris Paddack,663978
+777168,R,,146,Miami Marlins,113,Cincinnati Reds,Cal Quantrill,615698,Nick Lodolo,666157
+777169,R,,136,Seattle Mariners,147,New York Yankees,Bryan Woo,693433,Marcus Stroman,573186
+777170,R,,139,Tampa Bay Rays,111,Boston Red Sox,Taj Bradley,671737,Walker Buehler,621111
+777167,R,,120,Washington Nationals,138,St. Louis Cardinals,Michael Soroka,647336,Miles Mikolas,571945
+777156,R,,144,Atlanta Braves,133,Athletics,Spencer Strider,675911,JP Sears,676664
+777159,R,,140,Texas Rangers,108,Los Angeles Angels,Patrick Corbin,571578,Jack Kochanowicz,686799
+777158,R,,109,Arizona Diamondbacks,135,San Diego Padres,Eduardo Rodriguez,593958,Randy Vásquez,681190
+777164,R,,114,Cleveland Guardians,145,Chicago White Sox,Logan Allen,671106,Jonathan Cannon,686563
