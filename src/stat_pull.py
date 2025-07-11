@@ -1,120 +1,134 @@
 #!/usr/bin/env python3
 """
 stat_pull.py
------------
-
-Pulls batter & pitcher strikeout totals and opportunities from MLB's stats API
-and writes them to both per-season CSVs and a combined DuckDB for inspection.
-Usage:
-  cd src
-  python stat_pull.py 2024 2025
+------------
+Pull season-by-season Ks and opportunity counts for pitchers & batters,
+save per-season CSV, and aggregate into a combined DuckDB table.
 """
 import sys
-import statsapi
+from pathlib import Path
+
 import pandas as pd
 import duckdb
-from pathlib import Path
+import statsapi
 from tqdm import tqdm
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-SEASONS = sys.argv[1:]
+SEASONS = sys.argv[1:] or ["2024", "2025"]
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "player_stats.duckdb"
 
+# ── HELPERS ──────────────────────────────────────────────────────────────────
+def season_schedule(year: str):
+    return statsapi.get("schedule", {"sportId": 1, "season": year, "gameTypes": "R"})["dates"]
 
-def pull_stats(season: str) -> pd.DataFrame:
-    """
-    Pull season stats for batters & pitchers into a DataFrame.
-    Uses strikeOuts and atBats/gamesStarted as opportunities.
-    """
+def outs_from_ip(ip_str: str) -> int:
+    if not ip_str:
+        return 0
+    if "." in ip_str:
+        w,f = ip_str.split(".")
+        return int(w)*3 + int(f)
+    return int(ip_str)*3
+
+def pull_for_season(season: str) -> pd.DataFrame:
     rows = []
-    print(f"⏳  Pulling stats for season {season}…")
-    dates = statsapi.get(
-        "schedule",
-        {"sportId": 1, "season": season, "gameTypes": "R"},
-    )["dates"]
-
-    for d in tqdm(dates, desc=f"Sched {season}"):
+    for d in tqdm(season_schedule(season), desc=f"Season {season}", unit="day"):
         for g in d["games"]:
             if g["status"]["detailedState"] != "Final":
                 continue
             box = statsapi.get("game_boxscore", {"gamePk": g["gamePk"]})
+            date = d["date"]
             for side in ("away", "home"):
-                players = box["teams"][side]["players"]
-                for pid_key, pdata in players.items():
-                    pid = int(pid_key.replace("ID", ""))
-                    stats = pdata.get("stats", {})
-                    # pitcher stats
-                    pitch = stats.get("pitching") or {}
+                t = box["teams"][side]
+                # PITCHER
+                # pick the starter by gamesStarted >1, else max IP
+                starter = None
+                max_outs = -1
+                for pid, pinfo in t["players"].items():
+                    pitch = pinfo.get("stats", {}).get("pitching", {})
                     if pitch.get("gamesStarted", 0) >= 1:
-                        k_total = pitch.get("strikeOuts", 0)
-                        opps = pitch.get("gamesStarted", 0)
-                        rows.append((season, pid, "pitcher", k_total, opps))
-                    # batter stats
-                    bat = stats.get("batting") or {}
-                    if bat.get("atBats", 0) > 0:
-                        k_total = bat.get("strikeOuts", 0)
-                        opps = bat.get("atBats", 0)
-                        rows.append((season, pid, "batter", k_total, opps))
+                        starter = pid
+                        break
+                    outs = outs_from_ip(pitch.get("inningsPitched","0.0"))
+                    if outs > max_outs:
+                        max_outs, starter = outs, pid
+                if not starter:
+                    continue
 
-    df = pd.DataFrame(
-        rows,
-        columns=["season", "player_id", "player_role", "k_total", "opportunities"],
-    )
-    df["k_rate"] = df["k_total"] / df["opportunities"].replace(0, 1)
-    return df
+                # record pitcher row
+                pitch_stats = t["players"][starter].get("stats", {}).get("pitching", {})
+                k_total = pitch_stats.get("strikeOuts", 0) or 0
+                opps     = pitch_stats.get("battersFaced") or max_outs
+                rows.append({
+                    "season":       season,
+                    "player_id":    int(starter.replace("ID","")),
+                    "player_role":  "pitcher",
+                    "k_total":      k_total,
+                    "opportunities": opps,
+                })
 
+                # each batter in lineup
+                lineup = t.get("battingOrder") or list(t["players"].keys())
+                for spot, raw in enumerate(lineup[:9], start=1):
+                    pid = int(str(raw).replace("ID",""))
+                    bat_stat = t["players"][f"ID{pid}"].get("stats", {}).get("batting", {})
+                    k_t      = bat_stat.get("strikeOuts", 0) or 0
+                    opp_b    = bat_stat.get("plateAppearances", bat_stat.get("atBats", 0)) or 0
+                    rows.append({
+                        "season":       season,
+                        "player_id":    pid,
+                        "player_role":  "batter",
+                        "k_total":      k_t,
+                        "opportunities": opp_b,
+                    })
+    return pd.DataFrame(rows)
 
+# ── MAIN ─────────────────────────────────────────────────────────────────────
 def main():
-    if not SEASONS:
-        print("Usage: python stat_pull.py <season> [season ...]")
-        sys.exit(1)
-
-    # initialize DuckDB
-    con = duckdb.connect(str(DB_PATH))
-    con.execute("PRAGMA threads=4")
-
+    # pull per-season, save CSV, collect for DB
     all_dfs = []
     for season in SEASONS:
-        df = pull_stats(season)
-        all_dfs.append(df)
-
-        # save per-season CSV
+        df = pull_for_season(season)
         csv_path = DATA_DIR / f"player_stats_{season}.csv"
         df.to_csv(csv_path, index=False)
-        print(f"✅  Wrote {len(df):,} rows to {csv_path.name}")
+        print(f"✔️  Wrote {len(df):,} rows → {csv_path.name}")
+        all_dfs.append(df)
 
-        # write/update season-specific tables
-        con.register("stats_df", df)
-        for role in ("pitcher", "batter"):
-            tbl = f"{role}_stats_{season}"
-            con.execute(
-                f"CREATE OR REPLACE TABLE {tbl} AS \
-                 SELECT season, player_id, player_role, k_total, opportunities, k_rate \
-                 FROM stats_df WHERE player_role = '{role}';"
-            )
-            print(f"✅  DuckDB table '{tbl}' updated")
-        con.unregister("stats_df")
-
-    # combined table
     combined = pd.concat(all_dfs, ignore_index=True)
-    con.register("combined_df", combined)
-    con.execute(
-        "CREATE OR REPLACE TABLE player_stats AS \
-         SELECT season, player_id, player_role, k_total, opportunities, k_rate \
-         FROM combined_df"
-    )
-    con.unregister("combined_df")
 
-    # show tables for debug
-    tables = con.execute("SHOW TABLES").fetchall()
-    print("Tables in DuckDB:", tables)
+    # upsert into DuckDB
+    con = duckdb.connect(DB_PATH.as_posix())
+    con.execute("CREATE SCHEMA IF NOT EXISTS stats;")
 
+    # aggregate by season/player/role
+    con.register("full_df", combined)
+    # replace entire tables
+    con.execute("""
+        CREATE OR REPLACE TABLE stats.pitcher_stats AS
+        SELECT season, player_id,
+               SUM(k_total)        AS k_total,
+               SUM(opportunities)  AS opportunities,
+               SUM(k_total) / NULLIF(SUM(opportunities),0) AS k_rate
+          FROM full_df
+         WHERE player_role = 'pitcher'
+         GROUP BY season, player_id
+    """)
+    con.execute("""
+        CREATE OR REPLACE TABLE stats.batter_stats AS
+        SELECT season, player_id,
+               SUM(k_total)        AS k_total,
+               SUM(opportunities)  AS opportunities,
+               SUM(k_total) / NULLIF(SUM(opportunities),0) AS k_rate
+          FROM full_df
+         WHERE player_role = 'batter'
+         GROUP BY season, player_id
+    """)
+
+    print("\n📊 DuckDB tables now:")
+    print(con.execute("SHOW TABLES IN stats;").fetchall())
     con.close()
-    print(f"✅  DuckDB updated at {DB_PATH} with combined table 'player_stats'")
-
 
 if __name__ == "__main__":
     main()

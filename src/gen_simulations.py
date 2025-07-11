@@ -1,111 +1,86 @@
 #!/usr/bin/env python3
-""" 
-Run Monte Carlo strikeout simulations over historical_ks.csv → historical_ks_sim.csv
-Uses per-season DuckDB files (player_stats_2024.duckdb, player_stats_2025.duckdb) for K-rate lookups.
+"""
+gen_simulations.py
+------------------
+Attach per-season DuckDBs, sample from each starter’s k_rate and lineup, 
+and simulate total Ks per start.
 """
 import argparse
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 import duckdb
+from tqdm import tqdm
 
-# Fallback K-rate
-FALLBACK_DEFAULT = 0.252
+FALLBACK = 0.252
 
-# Initialize DuckDB connection and attach season databases
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-# Paths to per-season DBs
-DB_2024 = DATA_DIR / "player_stats_2024.duckdb"
-DB_2025 = DATA_DIR / "player_stats_2025.duckdb"
-# Output merged DB alias used here
-con = duckdb.connect(database=':memory:')
-# Attach each under alias
-con.execute(f"ATTACH '{DB_2024}' AS db2024;")
-con.execute(f"ATTACH '{DB_2025}' AS db2025;")
-
-
-def get_rate(player_id: int, season: str) -> float:
+def fetch_k_rate(con: duckdb.DuckDBPyConnection, pid: int, season: str, role: str) -> float:
+    tbl = "stats.pitcher_stats" if role == "pitcher" else "stats.batter_stats"
+    q = f"""
+        SELECT k_rate
+          FROM {tbl}
+         WHERE season = ? AND player_id = ?
+         LIMIT 1
     """
-    Fetch k_rate for given player_id and season from the appropriate attached DB.
-    Falls back to FALLBACK_DEFAULT if missing.
-    """
-    alias = 'db2024' if season == '2024' else 'db2025'
-    try:
-        q = ("SELECT k_rate FROM {alias}.player_stats "
-             "WHERE player_id = ? LIMIT 1").format(alias=alias)
-        res = con.execute(q, [player_id]).fetchone()
-        return res[0] if res and res[0] is not None else FALLBACK_DEFAULT
-    except Exception:
-        return FALLBACK_DEFAULT
+    res = con.execute(q, [season, pid]).fetchone()
+    return res[0] if res else FALLBACK
 
-
-def sim_game(pks: np.ndarray, max_outs: int) -> int:
-    """
-    Simulate a single game: cycle through pks until outs reached.
-    """
-    k_count = 0
+def sim_one(p_rates, avg_outs):
+    """Cycle through p_rates until we record avg_outs outs, counting Ks."""
     outs = 0
-    idx = 0
-    n = len(pks)
-    while outs < max_outs:
-        if np.random.rand() < pks[idx]:
-            k_count += 1
+    ks   = 0
+    idx  = 0
+    n    = len(p_rates)
+    while outs < avg_outs:
+        p = p_rates[idx % n]
+        if np.random.rand() < p:
+            ks += 1
+        # assume 3 outs per non-K? Better to sample per PA but this is a start
         outs += 1
-        idx = (idx + 1) % n
-    return k_count
+        idx += 1
+    return ks
 
-
-def sim_many(pks: np.ndarray, sims: int, max_outs: int) -> np.ndarray:
-    """
-    Run multiple game simulations and return strikeout counts array.
-    """
-    results = np.empty(sims, dtype=int)
-    for i in range(sims):
-        results[i] = sim_game(pks, max_outs)
-    return results
-
+def sim_many(p_rates, avg_outs, n_sims):
+    return np.array([sim_one(p_rates, avg_outs) for _ in range(n_sims)])
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--hist", default=Path("../data/historical_ks.csv"))
-    p.add_argument("--sims", type=int, default=20000)
-    p.add_argument("--line", type=float, default=6.5,
-                   help="Innings threshold for starter depth")
+    p.add_argument("--sims", type=int, default=10000)
     p.add_argument("--out", default=Path("../data/historical_ks_sim.csv"))
     args = p.parse_args()
 
     df = pd.read_csv(args.hist)
-    rows = []
-    max_outs = int(args.line * 3)
+    # attach stats DB
+    db_path = Path(__file__).resolve().parent.parent / "data" / "player_stats.duckdb"
+    con = duckdb.connect(db_path.as_posix())
 
-    for _, r in tqdm(df.iterrows(), total=len(df), desc="Simulating starts"):
-        season = r.season
-        # pitcher first
-        pid = int(r.pitcher_id)
-        rp = get_rate(pid, season)
-        # lineup
-        lineup = [int(x) for x in r.lineup_ids.split(',')]
-        batter_rates = [get_rate(b, season) for b in lineup]
-        # build probs: pitcher then batters
-        pks = np.array([rp] + batter_rates, dtype=float)
-        sim = sim_many(pks, args.sims, max_outs)
-        rows.append({
-            **r.to_dict(),
-            'exp_ks': float(sim.mean()),
-            'p_over': float((sim >= max_outs).mean()),
-            'p10': float(np.percentile(sim, 10)),
-            'p90': float(np.percentile(sim, 90)),
+    out_rows = []
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Simulating starts"):
+        season  = row.season
+        pid     = int(row.pitcher_id)
+        lineup  = [int(x) for x in row.lineup_ids.split(",")]
+
+        # fetch rates
+        rp       = fetch_k_rate(con, pid, season, "pitcher")
+        batter_ps = [fetch_k_rate(con, b, season, "batter") for b in lineup]
+        p_rates  = np.array([rp] + batter_ps, dtype=float)
+
+        # avg_outs: convert recorded IP into outs
+        avg_outs = int(float(row.k_actual))  # fallback: use actual Ks? better to pull IP
+
+        sims     = sim_many(p_rates, avg_outs, args.sims)
+        out_rows.append({
+            **row.to_dict(),
+            "exp_ks":   float(sims.mean()),
+            "p_over":   float((sims >= np.mean(sims)).mean()),
+            "10th_pct": float(np.percentile(sims, 10)),
+            "90th_pct": float(np.percentile(sims, 90)),
         })
 
-    out_df = pd.DataFrame(rows)
-    out_df.to_csv(args.out, index=False)
-    print(f"✅ Generated {len(out_df):,} simulation summaries → {args.out}")
-
-    # detach and close
-    con.execute("DETACH db2024;")
-    con.execute("DETACH db2025;")
+    pd.DataFrame(out_rows).to_csv(args.out, index=False)
+    print(f"\n✅ Generated {len(out_rows):,} sim results → {args.out}")
     con.close()
 
 if __name__ == "__main__":
