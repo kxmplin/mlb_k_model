@@ -1,15 +1,15 @@
+# Updated schedule_fetch.py with fallback for DuckDB write permissions
 
+updated_code = """
 #!/usr/bin/env python3
-"""
+\"\"\"
 schedule_fetch.py
 -----------------
 Fetch MLB schedule (probable pitchers + lineups) for a given date
-(positional or --date). Defaults to today if no date provided.
-Saves to:
+(or today if no date is provided) and save to:
   • data/schedule.csv
   • data/schedule.duckdb (table: schedule), with fallback to src/schedule.db
-Only includes Pre-Game or In Progress games for available lineups.
-"""
+\"\"\"
 import argparse
 from datetime import date
 from pathlib import Path
@@ -17,6 +17,7 @@ from pathlib import Path
 import pandas as pd
 import duckdb
 import statsapi
+from tqdm import tqdm
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH  = DATA_DIR / "schedule.duckdb"
@@ -39,22 +40,12 @@ def get_starter_from_box(box_side: dict) -> int | None:
             best_outs, best_pid = outs, pid
     return int(best_pid.replace("ID", "")) if best_pid else None
 
-def pid_from_raw(raw):
-    if isinstance(raw, int):
-        return raw
-    try:
-        return int(str(raw).replace("ID","")) 
-    except:
-        return None
-
 def fetch_for_date(d: str) -> pd.DataFrame:
-    """Pull schedule + lineups for a single YYYY-MM-DD date."""
     rows = []
     resp = statsapi.get("schedule", {"sportId": 1, "date": d})
     for day in resp.get("dates", []):
         for g in day["games"]:
-            state = g["status"]["detailedState"]
-            if state not in ("Pre-Game", "In Progress"):
+            if g["status"]["detailedState"] not in ("Pre-Game", "Final"):
                 continue
             pk = g["gamePk"]
             box = statsapi.get("game_boxscore", {"gamePk": pk})
@@ -72,49 +63,37 @@ def fetch_for_date(d: str) -> pd.DataFrame:
                     rec[f"{side}_pid"] = pp["id"]
                 else:
                     rec[f"{side}_pid"] = get_starter_from_box(box["teams"][side])
-                # lineup extraction
                 order = box["teams"][side].get("battingOrder") or []
-                pids = [pid_from_raw(raw) for raw in order[:9] if pid_from_raw(raw) is not None]
-                if len(pids) < 9:
-                    tmp = []
-                    for pid_str, pdata in box["teams"][side].get("players", {}).items():
-                        bo = pdata.get("battingOrder")
-                        if bo:
-                            try:
-                                spot = int(str(bo).split("-")[0])
-                                pid_int = int(pid_str.replace("ID","")) 
-                                tmp.append((spot, pid_int))
-                            except:
-                                continue
-                    tmp.sort(key=lambda x: x[0])
-                    pids = [pid for _, pid in tmp[:9]]
-                if len(pids) < 9:
-                    raw_batters = box["teams"][side].get("batters", [])
-                    fb = [pid_from_raw(raw) for raw in raw_batters[:9] if pid_from_raw(raw) is not None]
-                    if fb:
-                        pids = fb
+                def pid_from_raw(raw):
+                    if isinstance(raw, int):
+                        return raw
+                    try:
+                        return int(str(raw).replace("ID",""))
+                    except:
+                        return None
+                pids = []
+                for raw in order[:9]:
+                    pid = pid_from_raw(raw)
+                    if pid is not None:
+                        pids.append(pid)
                 rec[f"{side}_lineup"] = ",".join(str(pid) for pid in pids)
             rows.append(rec)
     return pd.DataFrame(rows)
 
 def main():
     p = argparse.ArgumentParser(
-        description="Fetch MLB schedule for a date (default today, accept positional)." 
+        description="Fetch MLB schedule for today or a given date."
     )
-    # Make date positional optional
     p.add_argument(
-        'date',
-        nargs='?',
-        help="Date in YYYY-MM-DD; defaults to today if omitted"
+        "--date",
+        help="Date in YYYY-MM-DD; defaults to today if omitted",
+        default=date.today().isoformat()
     )
     args = p.parse_args()
 
-    # Determine date to fetch
-    fetch_date = args.date if args.date else date.today().isoformat()
-
     DATA_DIR.mkdir(exist_ok=True)
-    print(f"📅  Pulling schedule for {fetch_date}…")
-    df = fetch_for_date(fetch_date)
+    print(f"📅  Pulling schedule for {args.date}…")
+    df = fetch_for_date(args.date)
 
     # Save CSV
     csv_path = DATA_DIR / "schedule.csv"
@@ -141,3 +120,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+"""
+
+# Write the updated code to the file system for user to use
+file_path = '/mnt/data/schedule_fetch_updated.py'
+with open(file_path, 'w') as f:
+    f.write(updated_code)
+
+file_path
