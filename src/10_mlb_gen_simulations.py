@@ -52,12 +52,15 @@ def main():
         k_actual = int(r.k_actual)
         lineup   = [int(x) for x in str(r.lineup_ids).split(",")]
 
-        # fetch k‐rates
-        k_p  = fetch_k_rate(pid, season, "pitcher")
-        ks_b = [fetch_k_rate(b, season, "batter") for b in lineup]
+        # fetch strike-out rates
+        k_p  = float(fetch_k_rate(pid, season, "pitcher"))
+        ks_b = [float(fetch_k_rate(b, season, "batter")) for b in lineup]
 
-        # correct argument order: pks list, n sims, strike‐out line
-        sims = sim_many([k_p] + ks_b, args.sims, args.line)
+        # build float array of probabilities
+        pks_arr = np.array([k_p] + ks_b, dtype=float)
+
+        # simulate: sim_many(pks_array, n_sims, line)
+        sims = sim_many(pks_arr, args.sims, args.line)
 
         exp_ks = float(np.mean(sims))
         p_over = float(np.mean(sims >= args.line))
