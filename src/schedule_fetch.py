@@ -5,13 +5,13 @@ schedule_fetch.py
 -----------------
 Fetch MLB schedule (probable pitchers + lineups) for a given date
 (positional or --date). Defaults to today if no date provided.
+Includes Pre-Game & In Progress lineups for future/today, and Final for past.
 Saves to:
   • data/schedule.csv
   • data/schedule.duckdb (table: schedule), with fallback to src/schedule.db
-Only includes Pre-Game or In Progress games for available lineups.
 """
 import argparse
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
@@ -50,11 +50,15 @@ def pid_from_raw(raw):
 def fetch_for_date(d: str) -> pd.DataFrame:
     """Pull schedule + lineups for a single YYYY-MM-DD date."""
     rows = []
+    # determine allowed states
+    today_str = date.today().isoformat()
+    allow_states = ("Pre-Game", "In Progress") if d == today_str else ("Pre-Game", "In Progress", "Final")
+
     resp = statsapi.get("schedule", {"sportId": 1, "date": d})
     for day in resp.get("dates", []):
         for g in day["games"]:
             state = g["status"]["detailedState"]
-            if state not in ("Pre-Game", "In Progress"):
+            if state not in allow_states:
                 continue
             pk = g["gamePk"]
             box = statsapi.get("game_boxscore", {"gamePk": pk})
@@ -101,7 +105,6 @@ def main():
     p = argparse.ArgumentParser(
         description="Fetch MLB schedule for a date (default today, accept positional)." 
     )
-    # Make date positional optional
     p.add_argument(
         'date',
         nargs='?',
@@ -109,10 +112,9 @@ def main():
     )
     args = p.parse_args()
 
-    # Determine date to fetch
     fetch_date = args.date if args.date else date.today().isoformat()
-
     DATA_DIR.mkdir(exist_ok=True)
+
     print(f"📅  Pulling schedule for {fetch_date}…")
     df = fetch_for_date(fetch_date)
 
@@ -121,23 +123,26 @@ def main():
     df.to_csv(csv_path, index=False)
     print(f"✔️  Wrote {len(df)} rows → {csv_path.name}")
 
-    # Save to DuckDB with fallback
-    try:
-        con = duckdb.connect(DB_PATH.as_posix())
-        con.execute("CREATE SCHEMA IF NOT EXISTS main;")
-        con.register("sched_df", df)
-        con.execute("CREATE OR REPLACE TABLE main.schedule AS SELECT * FROM sched_df;")
-        con.close()
-        print(f"✔️  Updated DuckDB table → {DB_PATH.name}")
-    except Exception as e:
-        fallback = Path(__file__).resolve().parent / "schedule.db"
-        print(f"⚠️  Could not write to {DB_PATH}: {e}")
-        print(f"ℹ️  Falling back to local DB: {fallback.name}")
-        con = duckdb.connect(fallback.as_posix())
-        con.register("sched_df", df)
-        con.execute("CREATE OR REPLACE TABLE schedule AS SELECT * FROM sched_df;")
-        con.close()
-        print(f"✔️  Saved DuckDB fallback → {fallback.name}")
+    # Save to DuckDB with fallback, only if DataFrame has columns
+    if not df.empty:
+        try:
+            con = duckdb.connect(DB_PATH.as_posix())
+            con.execute("CREATE SCHEMA IF NOT EXISTS main;")
+            con.register("sched_df", df)
+            con.execute("CREATE OR REPLACE TABLE main.schedule AS SELECT * FROM sched_df;")
+            con.close()
+            print(f"✔️  Updated DuckDB table → {DB_PATH.name}")
+        except Exception as e:
+            fallback = Path(__file__).resolve().parent / "schedule.db"
+            print(f"⚠️  Could not write to {DB_PATH}: {e}")
+            print(f"ℹ️  Falling back to local DB: {fallback.name}")
+            con = duckdb.connect(fallback.as_posix())
+            con.register("sched_df", df)
+            con.execute("CREATE OR REPLACE TABLE schedule AS SELECT * FROM sched_df;")
+            con.close()
+            print(f"✔️  Saved DuckDB fallback → {fallback.name}")
+    else:
+        print("⚠️  No data to save to DuckDB; schedule CSV is empty.")
 
 if __name__ == "__main__":
     main()
