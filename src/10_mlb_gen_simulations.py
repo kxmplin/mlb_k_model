@@ -21,6 +21,8 @@ import pandas as pd
 from k_pred_core import sim_many
 from kpred_sim import fetch_k_rate
 
+DEFAULT_K_RATE = 0.252  # fallback when no rate found
+
 def main():
     p = argparse.ArgumentParser()
     p.add_argument(
@@ -52,9 +54,22 @@ def main():
         k_actual = int(r.k_actual)
         lineup   = [int(x) for x in str(r.lineup_ids).split(",")]
 
-        # fetch strike-out rates
-        k_p  = float(fetch_k_rate(pid, season, "pitcher"))
-        ks_b = [float(fetch_k_rate(b, season, "batter")) for b in lineup]
+        # fetch pitcher rate, fallback if None
+        raw_p = fetch_k_rate(pid, season, "pitcher")
+        if raw_p is None:
+            print(f"⚠️  Pitcher {pid} missing k_rate; using default {DEFAULT_K_RATE}")
+            k_p = DEFAULT_K_RATE
+        else:
+            k_p = float(raw_p)
+
+        # fetch batters rates, fallback
+        ks_b = []
+        for b in lineup:
+            raw_b = fetch_k_rate(b, season, "batter")
+            if raw_b is None:
+                ks_b.append(DEFAULT_K_RATE)
+            else:
+                ks_b.append(float(raw_b))
 
         # build float array of probabilities
         pks_arr = np.array([k_p] + ks_b, dtype=float)
